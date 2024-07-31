@@ -9,6 +9,9 @@ class Genome:
         self.seq = seq.upper()
         self.header = header
         self.source = source
+
+    def __repr__(self) -> str:
+        return self.seq
     
     @property
     def composition(self) -> dict[str, float]:

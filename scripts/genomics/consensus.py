@@ -1,5 +1,7 @@
 from collections import defaultdict
 from math import log
+import numpy as np
+
 
 class MotifMatrix:
     """
@@ -25,52 +27,108 @@ class MotifMatrix:
         Check if all input sequences have the same length.
         """
         processed_seqs = []
-        l = len(seqs[0])
+        n = len(seqs[0])
         for seq in seqs:
-            if len(seq) != l:
+            if len(seq) != n:
                 raise ValueError("All sequences must have the same length")
             processed_seqs.append(seq.upper())
         return processed_seqs
 
-    def _transpose(self) -> dict[int, str]:
-        """
-        Transforms the columns of the matrix into rows.
-        """
-        seqs_t = defaultdict(list)
-        for seq in self.seqs:
-            for i in range(self.nrows):
-                seqs_t[i].append(seq[i])
-        return seqs_t
+    # def score(self, pattern: str) -> int:
+    #     """
+    #     Compute the hamming distance between `pattern` and
+    #     each string in a list of sequnces.
+    #     """
+    #     k = len(pattern)
+    #     dist = 0
+    #     for seq in self.seqs:
+    #         hd_min = float('inf')
+    #         for i in range(len(seq)-k+1):
+    #             kmer = seq[i:i+k]
+    #             hd_curr = self.hamming_distance(kmer, pattern)
+    #             if hd_min > hd_curr:
+    #                 hd_min = hd_curr
+    #         dist += hd_min
+    #     return dist
 
-    def counts(self) -> dict[str, int]:
+
+class CountMatrix:
+    """
+    Represents a count matrix derived from a list
+    of sequences with equal length.
+    """
+    def __init__(self, motifs: MotifMatrix, pseudocounts: bool=True) -> None:
+        self.motifs = motifs
+        self.pseudocounts = pseudocounts
+        self.C = self._generate_counts()
+
+    def __str__(self) -> str:
+        fmt = ''
+        for base, counts in self.C.items():
+            c_str = '\t'.join(map(str, counts))
+            fmt += f'[{base}]\t{c_str}\n'
+        return fmt
+
+    def _generate_counts(self) -> dict[str, int]:
         """
         Return the nucleotide counts of each column in the matrix.
+        If pseudocounts is set to True, each position in the matrix
+        is incremented by 1.
         """
-        M = {n: [] for n in 'ACGT'}
-        for row in self._transpose().values():
-            for base in 'ACGT':
-                M[base].append(row.count(base))
-        return dict(M)
+        if self.pseudocounts:
+            C = {base: np.ones(self.motifs.ncols, dtype=np.int16) for base in 'ACGT'}
+        else:
+            C = {base: np.zeros(self.motifs.ncols, dtype=np.int16) for base in 'ACGT'}
 
-    def profile(self) -> dict[str, float]:
-        """
-        Return the nucleotide proportion of each column in the matrix.
-        """
-        M = {n: [] for n in 'ACGT'}
-        for row in self._transpose().values():
-            for base in 'ACGT':
-                M[base].append(row.count(base)/self.nrows)
-        return dict(M)
+        for i in range(self.motifs.nrows):
+            for j in range(self.motifs.ncols):
+                base = self.motifs.seqs[i][j]
+                C[base][j] += 1
+        return C
 
+
+class ProfileMatrix(CountMatrix):
+    """
+    Represents a profile matrix dervied from a count matrix.
+    """
+    def __init__(self, motifs: MotifMatrix, **kwargs) -> None:
+        super().__init__(motifs, pseudocounts=kwargs.get('pseudocounts', True))
+        self.P = self._generate_profile()
+
+    def _generate_profile(self) -> dict[str, float]:
+        """
+        Retrun the relative proportion of each nucleotide at each
+        index of a motif matrix.
+        """
+        # Vectorized function to round to 4 decimals.
+        round_4 = lambda x: round(x, 4)
+        round_4_vec = np.vectorize(round_4)
+
+        P = self.C.copy()
+        denom = self.motifs.nrows
+        if self.pseudocounts:
+            denom += 4
+        for base, counts in self.C.items():
+            P[base] = round_4_vec(counts / denom)
+        return P
+
+    def __str__(self) -> str:
+        fmt = ''
+        for base, counts in self.P.items():
+            p_str = '\t'.join(map(str, counts))
+            fmt += f'[{base}]\t{p_str}\n'
+        return fmt
+
+    @property
     def consensus(self) -> str:
         consensus_str = ''
-        pmatrix = self.profile()
-        for i in range(len(pmatrix['A'])):
+        m = len(self.P['A'])
+        for i in range(m):
             max_prob = 0
             base_identity = None
             for base in 'ACGT':
-                if pmatrix[base][i] > max_prob:
-                    max_prob = pmatrix[base][i]
+                if self.P[base][i] > max_prob:
+                    max_prob = self.P[base][i]
                     base_identity = base
             consensus_str += base_identity
         return consensus_str
@@ -78,12 +136,11 @@ class MotifMatrix:
     @property
     def entropy(self) -> float:
         score = 0
-        for row in self.profile().values():
+        for row in self.P.values():
             for n in row:
-                for n == 0: continue
+                if n == 0: continue
                 score += -(n * log(n, 2))
-        return score
-
+        return round(score, 4)
 
 def test_motif_matrix() -> None:
     motifs = [
@@ -99,6 +156,10 @@ def test_motif_matrix() -> None:
     "TCGGGTATAACC"
     ]
     M = MotifMatrix(*motifs)
-    print(M.consensus())
+    cm = CountMatrix(M)
+    pm = ProfileMatrix(M)
+    print(pm)
+    print(pm.consensus)
+    print(pm.entropy)
 
 test_motif_matrix()

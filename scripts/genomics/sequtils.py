@@ -1,3 +1,5 @@
+from itertools import product
+
 def frequency_table(text: str, k: int) -> dict[str, int]:
     """
     Compute for all unique k-mers and count their occurrences. 
@@ -53,3 +55,28 @@ def neighbors(pattern: str, d: int):
         else:
             neighborhood.add(first_symbol(pattern) + nb)
     return neighborhood
+
+def all_strings(k: int) -> list[str]:
+    """
+    Generate all possible strings of length k from
+    the DNA alphabet {'A', 'C', 'G', 'T'}.
+    """
+    alphabet = ('A', 'C', 'G', 'T')
+    kmers = []
+    for comb in product(alphabet, repeat=k):
+        kmers.append(''.join(comb))
+    return kmers
+
+def compute_pr(kmer: str, profile: dict[str, list[float]]) -> float:
+    """
+    Compute the probability of `kmer` occuring as a subtring of a larger
+    sequence. Resulting value is based on `profile`.
+    """
+    assert len(kmer) == len(profile["A"])
+    pr = 1
+    for i, base in enumerate(kmer):
+        prop = profile[base][i]
+        if prop == 0:
+            return 0
+        pr *= prop
+    return pr
