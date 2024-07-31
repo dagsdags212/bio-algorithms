@@ -1,0 +1,534 @@
+---
+highlight-style: dracula
+---
+<!-- PROJECT INITIALIZATION -->
+
+```{python}
+#| echo: false
+#| tags: [paramters]
+import os
+rootdir = os.environ.get("PROJECT_ROOT")
+datadir = rootdir + "/data"
+vcholerae_genome_path = datadir + "/vcholerae.genome.fa"
+ecoli_genome_path = datadir + "/ecoli.genome.fa"
+```
+
+<!-- CONTENT START -->
+# Finding the Origin of Replication
+
+The central dogma of molecular biology states that genetic information flows from DNA to RNA to protein. In some organisms such as viruses, RNA can be converted back to DNA through a process called *reverse transcription*. In the cell, genetic information is stored in a condensed polymer of nucleotides enclosed by a membrane.
+
+During replication, molecular copying machines called **DNA polymerases** scan through the genome in search of regions called the **replication origin**. A set of amino acids that form a pocket in the polymerase is energetically favored to the nucleotide sequence of the origin of replication (*orisite*). This poses an interesting problem in bioinformatics:
+
+Can we find the origin of replication given the complete genome sequence of an organism?
+
+> **Finding Origin of Replication Problem:**
+> 
+> - **Input**: A DNA string *genome*.
+> - **Output**: The location of *ori* in *genome*.
+
+The limited information given to us poses this as an ill-defined computational problem. 
+
+- What are the important properies of orisites? 
+- Can they be identified based on GC content? 
+- Do they contain sequence motifs? 
+ 
+In contrast, a biologist could answer this by formulating a lab experiment. Parts of the genome can be targeted and deleted until the organism can no longer replicate. This approach if effective, but costly. As such, *in silico* methods may be useful for narrowing down the scope of our problem.
+
+## A computational framework
+
+*Vibrio cholera* is a bacterium that contains a relatively small genome (~1.1M bps). Its genome is circular and exists as many copies. We know that the initiation of replication is mediated by *DnaA* which is a protein that binds to a short segment within the *ori* known as the *DnaA box*.
+
+Since the interaction between *DnaA* and the *DnaA box* is ubiquitious across bacteria, there must be an encoded message within the *DnA box* that signals *DnaA* to bind with it. This poses another problem:
+
+> **Hidden Message Problem**: Find a 'hidden message' in the replication origin.
+>
+> - **Input**: A string *text* representing the replication origin of a genome.
+> - **Output**: A hidden message in *text*.
+
+One approach is too look for substrings that frequently occur within the genome. The term **k-mer** will be used to refer to a string of length *k* that occurr within a larger string. 
+
+We can write a python function to do this:
+```{python}
+# Complexity: |text| - k + 1 [O(n)]
+def pattern_count(text: str, pattern: str) -> int:
+    """
+    Counts the number of occurrences of 'pattern' within 'text'.
+    """
+    assert len(pattern) <= len(text)
+    count = 0
+    l = len(pattern)
+    for i in range(len(text)-l+1):
+        if text[i:i+l] == pattern:
+            count += 1
+    return count
+```
+
+Given `text=GCGCG` and `pattern=GCG`, we can expect that `pattern` occurs twice within `text`:
+```{python}
+text = "GCGCG"
+pattern = "GCG"
+
+print("Pattern count: ", pattern_count(text, pattern))
+```
+
+But how do we identify the pattern to search for in the first place? Thinking in terms of probability, a longer k-mer is less likely to repeatedly occur within a small region of the genome. Thus a frequently occurring k-mer that is longer is length can be "intended".
+
+> **Frequent Words Problem**: Find the most frequent k-mers in a string.
+>
+> - **Input**: A string *text* and an integer *k*.
+> - **Output**: All most frequent k-mers in *text*.
+
+We could use python lists to keep track of all unique k-mers, one for the k-mer and another for the counts. The `pattern_count` routine provided in the previous section can be reused for counting the number of k-mer occurrence.
+
+```{python}
+# Complexity: (|text| - k + 1)(|text| - k + 1)(k) [O(n^2)]
+def frequent_words(text: str, k: int) -> list[str]:
+    """
+    Compute for all unique k-mers within `text` and count their occurrences.
+    """
+    patterns = []
+    counts = []
+
+    # Count occurrence of each k-mer and append to `counts`.
+    for i in range(len(text)-k+1):
+        kmer = text[i:i+k]
+        counts.append(pattern_count(text, kmer))
+
+    max_count = max(counts)
+
+    # Filter most frequenly-occurring k-mers.
+    for i in range(len(text)-k+1):
+        if coounts[i] == max_count:
+            patterns.append(text[i:i+k])
+    
+    # Remove duplicates from list.
+    patterns = list(set(patterns))
+    return patterns
+```
+
+A more efficient approach is to use a python dictionary to avoid counting repeats. We iterate over the sequence and check if the current k-mer exists in the dictionary. If it does not exist, we add it as a key with a value of 1. If it exist, we just index the dictionary and increment its value.
+
+```{python}
+def frequency_table(text: str, k: int) -> dict[str, int]:
+    """
+    Compute for all unique k-mers and count their occurrences. 
+    Returns a dictionary with k-mers as keys and counts as values.
+    """
+    freq_map = {}
+    for i in range(len(text)-k+1):
+        kmer = text[i:i+k]
+        if kmer in freq_map:
+            freq_map[kmer] += 1
+        else:
+            freq_map[kmer] = 1
+    return freq_map
+```
+
+We can use this approach to improve the runtime of our `frequent_words` approach.
+
+```{python}
+def better_frequent_words(text: str, k: int) -> list[str]:
+    """
+    Computes for the unique k-mers and their counts using a hashmap.
+    Returns a list of k-mers.
+    """
+    patterns = []
+    freq_map = frequency_table(text, k)
+    max_count = max(freq_map.values())
+    for kmer in freq_map:
+        if freq_map[kmer] == max_count:
+            patterns.append(kmer)
+    return patterns
+```
+
+Let's check if our implementation returns the expected values. Given `text=ACGTTGCATGTCGCATGATGCATGAGAGCT` and `k=4`, the function should output `[GCAT, CATG]`.
+
+```{python}
+text='ACGTTGCATGTCGCATGATGCATGAGAGCT'
+k=4
+frequent_kmers = better_frequent_words(text, k)
+
+print("Most frequent kmers: ", frequent_kmers)
+```
+
+> **Reverse Complement Problem**: Find the reverse complement of a DNA string.
+> - **Input**: A DNA string *pattern*.
+> - **Output**: The reverse complement of *pattern*.
+
+The *ori* of *V. cholerae* has been experimentally determined to be:
+
+<center>
+```
+atcaatgatcaacgtaagcttctaagcATGATCAAGgtgctcacacagtttatccacaac
+ctgagtggatgacatcaagataggtcgttgtatctccttcctctcgtactctcatgacca
+cggaaagATGATCAAGagaggatgatttcttggccatatcgcaatgaatacttgtgactt
+gtgcttccaattgacatcttcagcgccatattgcgctggccaaggtgacggagcgggatt
+acgaaagcatgatcatggctgttgttctgtttatcttgttttgactgagacttgttagga
+tagacggtttttcatcactgactagccaaagccttactctgcctgacatcgaccgtaaat
+tgataatgaatttacatgcttccgcgacgatttacctCTTGATCATcgatccgattgaag
+atcttcaattgttaattctcttgcctcgactcatagccatgatgagctCTTGATCATgtt
+tccttaaccctctattttttacggaagaATGATCAAGctgctgctCTTGATCATcgtttc
+```
+</center>
+
+The sequences in capital letters represent a 9-mer (itself and its reverse complement) that occur within a 500-bp region of the bacterial genome. The function is provided to compute for the reverse complement of a string:
+
+```{python}
+def reverse_complement(pattern: str) -> str:
+    """
+    Returns the reverse complement of a given DNA string.
+    """
+    comp_map = {"A": "T", "T": "A", "G": "C", "C": "G"}
+    comp = ""
+    for n in pattern:
+        comp = comp_map[n] + comp
+    return comp
+```
+
+It is seen that a unique 9-mer (`ATGATCAAG`) and its reverse complement (`ATGATCAAG`) occurs six times within the region. This is an improbable outcome that makes us think that this region indeed represent *DnaA* boxes in the bacterium. Before concluding, let us check if this 9-mer also occurs elsewhere in the genome as a high frequency.
+
+> **Pattern Matching Problem:** Find all occurrences of a pattern in a string.
+> 
+> - **Input**: Strings *pattern* and *genome*.
+> - **Output**: All starting positions in *genome* where *pattern* appears as a substring.
+
+```{python}
+def pattern_matching(pattern: str, genome: str) -> list[int]:
+    """
+    Return a list of indices corresponding to the first positions 
+    wherein `pattern` occurs within `genome` as a substring.
+    """
+    matches = []
+    k = len(pattern)
+    for i in range(len(genome)-k+1):
+        if pattern == genome[i:i+k]:
+            matches.append(i)
+    return matches
+```
+
+Use the `pattern_matching` function to search `CTTGATCAT` to the *V. cholerae* genome.
+
+```{python}
+genome = open(vcholerae_genome_path, "r").read()
+pattern = 'ATGATCAAG'
+matches = pattern_matching(pattern, genome)
+
+print(f'Pattern {pattern} appears {len(matches)} times.')
+print(*matches)
+```
+
+The pattern appears 17 times in the genome but at seemingly random interval. However, 9-mers at positions `151913`, `152013`, and `152394` form a clump twithin a 500-bp region thus supporting the conclusion that this pattern represents the hiddent message to *DnaA* to initiate replication.
+
+> **Clump Finding Problem**: Find patterns forming clumps in a string.
+>
+> - **Input**: A string *genome* and integers *k*, *L*, and *t*.
+> - **Output**: All distinct *k-mers* forming (*L*, *t*)-clumps in *genome*.
+
+```{python}
+def find_clumps(text: str, k: int, L: int, t: int) -> list[str]:
+    """
+    Return a list of k-mers that occur at least t-times within subsets with length L.
+
+    text: (str) the genome.
+    k: (int) k-mer length.
+    L: (int) subset length.
+    t: (int) minimumum number of occurrences.
+    """
+    patterns = []
+    n = len(text)
+    for i in range(n-L+1):
+        window = text[i:i+L]
+        freq_map = frequency_table(window, k)
+        for kmer in freq_map:
+            if freq_map[kmer] >= t:
+                patterns.append(kmer)
+    patterns = list(set(patterns))
+    return patterns
+```
+
+```{python}
+text = "CGGACTCGACAGATGTGAAGAACGACAATGTGAAGACTCGACACGACAGAGTGAAGAGAAGAGGAAACATTGTAA"
+k, L, t = 5, 50, 4
+
+results = find_clumps(text, k, L, t)
+print(results)
+```
+
+### GC Diagram
+
+```{python}
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Load the E. coli genome.
+ecoli_genome = open(ecoli_genome_path, "r").read()
+
+# Split genome into 1000-bp chunks.
+n = 100000
+chunks = [ecoli_genome[i:i+n] for i in range(0, len(ecoli_genome), n)]
+percent_cytosine = np.array([chunk.count("C") / n * 100 for chunk in chunks])
+
+def compute_gc_diff(chunk: str) -> float:
+    return (chunk.count('G')/len(chunk)*100) - (chunk.count('C')/len(chunk)*100)
+
+gc_diff = list(map(compute_gc_diff, chunks))
+print(gc_diff[:10])
+
+fig, ax = plt.subplots()
+
+plt.bar(x=[i for i in range(0, len(percent_cytosine))], height=gc_diff, width=0.8, align="edge")
+ax.plot([0, len(percent_cytosine)], [25, 25], "k--")
+
+ax.set_xlabel("Genome position (MB)")
+ax.set_ylabel("Frequency of G - Frequency of C (%)")
+ax.set_ylim([-4, 4])
+ax.set_xlim([0.0, len(percent_cytosine)])
+
+# plt.yticks(np.arange(21, 30, 2))
+plt.xticks(np.arange(0, 50, 5), labels=np.arange(0, 50, 5)/10)
+
+plt.show()
+```
+
+### Skew Diagram
+
+The skew of a genome is a running difference between the cytosine count and the guanine count.
+
+```{python}
+def compute_skew_array(genome: str) -> list[int]:
+    """
+    Compute the running difference between cytosine cout and guanine count
+    in a given genome string.
+    """
+    counts = [0]
+    genome = genome.upper()
+    for base in genome:
+        val = counts[-1]
+        if base == "G":
+            val += 1
+        elif base == "C":
+            val -= 1
+        counts.append(val)
+    # The counts array should be longer than the genome length by one element.
+    assert len(counts) == len(genome) + 1
+    return counts
+```
+
+```{python}
+genome = "CATGGGCATCGGCCATACGCC"
+counts = compute_skew_array(genome)
+print(counts)
+```
+
+> **Minimum Skew Problen**: Find a position in a genome where the skew diagram attains a minimum.
+>
+> - **Input**: A DNA string *genome*.
+> - **Output**: all integer(s) *i* minimizing skew array values.
+
+```{python}
+def minimum_skew(genome: str) -> list[int]:
+    """
+    Return integer(s) with the smallest value in the skew array.
+    """
+    skew_arr = compute_skew_array(genome)
+    min_val = min(skew_arr)
+    min_pos = [i for i, val in enumerate(skew_arr) if val == min_val]
+    return min_pos
+```
+
+The `minimum_skew` function helps us identify the approximate location of the orisite and terminus site of a bacterium. 
+
+```{python}
+
+def draw_skew_diagram(skew_arr: list[int]) -> None:
+    """
+    Plot values from a skew array with x-values corresponding to genome position
+    and y-values corresponding to skew value.
+    """
+    positions = [*range(len(skew_arr))]
+
+    # Positions of orisite and tersite, respectively.
+    min_count, max_count = min(skew_arr), max(skew_arr)
+    ori = (positions[skew_arr.index(min_count)], min_count)
+    ter =  (positions[skew_arr.index(max_count)], max_count)
+
+    # Plot skew diagram and label ori/ter sites.
+    plt.plot(positions, skew_arr)
+    plt.annotate(
+        text="ori",
+        xy=ori,
+        xytext=(ori[0], ori[1]*1.1),
+        ha="center"
+    )
+    plt.annotate(
+        text="ter",
+        xy=ter,
+        xytext=(ter[0], ter[1]*1.02),
+        ha="center"
+    )
+    plt.title("Skew diagram of E. coli")
+    plt.ylabel("skew")
+    plt.xlabel("position")
+    plt.xticks([0, 1e6, 2e6, 3e6, 4e6, 5e6], map(int, [0, 1e6, 2e6, 3e6, 4e6, 5e6]))
+    plt.show()
+```
+
+```{python}
+skew_arr = compute_skew_array(ecoli_genome)
+draw_skew_diagram(skew_arr)
+```
+
+### Hamming Distance
+
+> **Hamming Distance Problem**: Compute the hamming distance between two strings.
+>
+> - **Input**: Two strings of equal length.
+> - **Output**: The Hamming distance between the input strings.
+
+```{python}
+def hamming_distance(p: str, q: str) -> int:
+    """
+    Compute for the distance between two strings.
+    """
+    assert len(p) == len(q)
+    dist = 0
+    for i in range(len(p)):
+        if p[i] != q[i]:
+            dist += 1
+    return dist
+```
+
+> **Approximate Pattern Matching Problem**: Find all approximate occurrences of a pattern in a string.
+>
+> - **Input**: Strings *pattern* and *text* along with an integer *d*.
+> - **Output**: All starting positions where *pattern* appears as a substring of *text* with at most *d* mismatches.
+
+```{python}
+def approximate_pattern_matching (pattern: str, text: str, d: int) -> list[int]:
+    """
+    Return all indices where `pattern` appears as a substring of `text` 
+    with at most `d` mismatches.
+    """
+    matched_pos = []
+    k = len(pattern)
+    for i in range(len(text)-k+1):
+        kmer = text[i:i+k]
+        if hamming_distance(kmer, pattern) <= d:
+            matched_pos.append()
+```
+
+```{python}
+def approximate_pattern_count(text: str, pattern: str, d: int) -> int:
+    """
+    Count the number of occurrences of `pattern` within `text` 
+    with at most `d` mismatches.
+    """
+    count = 0
+    k = len(pattern)
+    for i in range(len(text)-k+1):
+        kmer = text[i:i+k]
+        if hamming_distance(pattern, kmer) <= d:
+            count += 1
+    return count
+```
+
+### Neighborhood of a String
+
+```{python}
+def neighbors(pattern: str, d: int):
+
+    suffix = lambda pattern: pattern[1:]
+    first_symbol = lambda pattern: pattern[0]
+
+    if d == 0:
+        return {pattern}
+    if len(pattern) == 1:
+        return {'A', 'C', 'G', 'T'}
+    
+    neighborhood = set()
+    suffix_neighbors = neighbors(suffix(pattern), d)
+
+    for nb in suffix_neighbors:
+        if hamming_distance(suffix(pattern), nb) < d:
+            for base in 'ACGT':
+                neighborhood.add(base + nb)
+        else:
+            neighborhood.add(first_symbol(pattern) + nb)
+    return neighborhood
+```
+
+> **Frequent Words with Mismatches Problem**: Find the most frequent k-mers with mismatches in a string.
+>
+> **Input**: A string *text* as well as integers *k* and *d*.
+> **Output**: All most frequent k-mers with up to *d* mismatches in *text*.
+
+```{python}
+def frequent_words_with_mismatches(text: str, k: int, d: int) -> list[str]:
+    """
+    """
+    patterns = []
+    freq_map = {}
+    n = len(text)
+    for i in range(n-k+1):
+        kmer = text[i:i+k]
+        neighborhood = neighbors(kmer, d)
+        # print(neighborhood)
+        for neighbor in neighborhood:
+            if neighbor in freq_map:
+                freq_map[neighbor] += 1
+            else:
+                freq_map[neighbor] = 1
+
+    max_val = max(freq_map.values())
+    for kmer in freq_map:
+        if freq_map[kmer] == max_val:
+            patterns.append(kmer)
+    return patterns
+```
+
+> **Frequent Words with Mismatches and Reverse Complements Problem**: Find the most frequent k-mers (with mismatches and reverse complements) in a string.
+>
+> - **Input**: A DNA string *text* as well as integers *k* and *d*.
+> - **Output**: All k-mers *pattern* maximizing the count of *pattern* and its reverse complement over all possible k-mers.
+
+```{python}
+from collections import defaultdict
+
+def frequent_words_mismatches_reverse_complements(text: str, k: int, d: int) -> list[str]:
+    kmer_count = defaultdict(int)
+    for i in range(len(text)-k+1):
+        kmer_count[text[i:i+k]] += 1
+        kmer_count[reverse_complement(text[i:i+k])] += 1
+
+    mismatch_count = defaultdict(int)
+    for kmer, count in kmer_count.items():
+        for nb in neighbors(kmer, d):
+            mismatch_count[nb] += count
+
+    max_count = max(mismatch_count.values())
+    return sorted([kmer for kmer, count in mismatch_count.items() if count == max_count])
+```
+
+### Using the `Genome` class
+
+```{python}
+import os
+os.chdir(rootdir+"/scripts")
+from genomics import *
+
+genome = load_genome(datadir+"/senterica.genome.fa", source="S. enterica")
+
+print(genome.header)
+print(genome.seq[:100])
+```
+
+Find the origin of replication:
+
+```{python}
+genome.skew_diagram()
+```
+
+```{python}
+print(genome.frequent_words_mismatches_reverse_complements(9, 1))
+```

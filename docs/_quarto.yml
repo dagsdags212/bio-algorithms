@@ -1,0 +1,21 @@
+project:
+  type: book
+
+book:
+  title: "Bioinformatics Algorithms"
+  author: "Jan Emmanuel Samson"
+  date: "7/24/2024"
+  chapters:
+    - index.qmd
+    - references.qmd
+
+bibliography: references.bib
+
+format:
+  html:
+    theme: cosmo
+    highlight-style: github
+  pdf:
+    documentclass: scrreprt
+
+highlight-style: github

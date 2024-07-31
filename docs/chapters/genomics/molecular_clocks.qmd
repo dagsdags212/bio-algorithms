@@ -1,0 +1,452 @@
+---
+highlight-style: dracula
+---
+
+<!-- PROJECT INITIALIZATION -->
+
+```{python}
+#| echo: false
+#| tags: [paramters]
+import os
+from math import log
+import numpy as np
+
+rootdir = os.environ.get("PROJECT_ROOT")
+datadir = rootdir + "/data"
+os.chdir(rootdir+"/scripts")
+```
+
+# Chapter 2: Which DNA Patterns Play the Role of Molecular Clocks?
+
+In plants, three genes are responsible for keeping track of day and night cycles:
+
+1. LHY
+2. CCA1
+3. TOC1
+ 
+These genes encode regulatory proteins that serve as the plants' master timekeepers for coordinating physiological processes such as photosynthesis and respiration. Often, external factors such as nutrient availability and sunlight control gene expression in order to adjust according to their environments. The three genes also control the expression of each other, with TOC1 serving as a promoter for LHY and CCA1, and LHY/CCA1 functioning as a repressor of TOC1. This relationship provides a negative feedback loop. 
+
+In the morning, sunlight activates the transcription of LHY and CCA1, triggering the repression of TOC1 transcription. As the amount of light diminishes towards nighttime, LHY/CCA1 production dwindles down thus allowing the transcription of TOC1 to proceed. At the peak of night, TOC1 expression is at its maximum which starts promoting the transcription of LHY/CCA1. 
+
+<center>
+
+```{mermaid}
+flowchart LR
+    PROMOTER["`**TOC1**`"]
+    REPRESSOR["`**LHY**
+                **CCA1**`"]
+    SUNLIGHT["Sunlight"]
+    NIGHT["Night"]
+
+    REPRESSOR --x PROMOTER --o REPRESSOR
+    SUNLIGHT --o REPRESSOR
+    NIGHT --o PROMOTER
+```
+
+</center>
+
+The mentioned genes are classified as **transcription factors** which regulate other genes by binding to a specific short DNA interval called a **regulatory motif** (also called **transcription factor binding site**). Regulatory motifs are found upstream of a gene region and usually span between 600 and 1000 nucleotides in length. As an example, CCA1 binds to `AAAAAATCT` in the upstream region.
+
+Locating these motifs are difficult as their sequences are not completely conserved. As such, mutations are usually found within these sequences which do not hinder the binding of transcription factors. 
+
+In this write-up, I will be exploring and providing intuition on a few algorithms useful for motif finding.
+
+## A brute force algorithm for motif finding
+
+> **Implanted Motif Problem**: Find all (*k*,*d*)-motifs in a collection of strings.
+> 
+> **Input**: A collection of strings *dna*, and integers *k* and *d*.
+> **Output**: All (k,d)-motifs in *dna*.
+
+```{python}
+from genomics.sequtils import neighbors, hamming_distance
+
+# 1. Generate the k-mer set of each sequence in the list.
+# 2. Generate the neighborhood for each k-mer of the set.
+# 3. Store all unique neighbors in a single set.
+# 4. Iterate over unique neighbors, and check if they exist in the neighborhood of each sequence.
+
+def extract_kmers(seq: str, k: int) -> list[str]:
+    """
+    Subdivide a string into its k-mer components. 
+    Return a list of k-mers.
+    """
+    return [seq[i:i+k] for i in range(len(seq)-k+1)]
+
+def extract_neighborhoods(dna: list[str], k: int, d: int) -> set[str]:
+    """
+    Return the union of all neighborhoods produced for each
+    k-mer substring.
+    """
+    neighborhood = []
+    kmer_list = [extract_kmers(s, k) for s in dna]
+    for kmers in kmer_list:
+        local_nb = set()
+        for kmer in kmers:
+            local_nb |= neighbors(kmer, d)
+        neighborhood.append(local_nb)
+    return neighborhood
+
+def motif_enumeration(dna: list[str], k: int, d: int) -> list[str]:
+    patterns = set()
+    # Generate neighbors for all k-mers in all sequences.
+    neighborhood_list = extract_neighborhoods(dna, k, d)
+    neighborhood = set()
+    for nb in neighborhood_list:
+        neighborhood |= nb
+
+    for nb in neighborhood:
+        matches = 0
+        for nbl in neighborhood_list:
+            if nb in nbl:
+                matches += 1
+        if matches == len(dna):
+            patterns.add(nb)
+
+    return patterns
+```
+
+```{python}
+dna = ['ATTTGGC', 'TGCCTTA', 'CGGTATC', 'GAAAATT']
+k, d = 3, 1
+
+result = motif_enumeration(dna, k, d)
+print(result)
+```
+
+## Profile Matrix
+
+```{python}
+from collections import defaultdict
+
+def transpose(motifs: list[str]) -> dict[int,str]:
+    motifs_t = defaultdict(list)
+    l = len(motifs[0])
+    for motif in motifs:
+        for i in range(l):
+            motifs_t[i].append(motif[i])
+    return motifs_t
+
+def count_matrix(motifs: list[str]) -> dict[str, int]:
+    M = {n: [] for n in 'ACGT'}
+    for row in transpose(motifs).values():
+        for base in 'ACGT':
+            M[base].append(row.count(base))
+    return dict(M)
+
+def profile_matrix(motifs: list[str]) -> dict[str,float]:
+    n = len(motifs)
+    M = {n: [] for n in 'ACGT'}
+    for row in transpose(motifs).values():
+        for base in 'ACGT':
+            M[base].append(row.count(base)/n)
+    return dict(M)
+
+def consensus(pmatrix: dict[str,float]) -> str:
+    consensus_str = ""
+    n = len(pmatrix["A"])
+    for i in range(n):
+        max_prob = 0
+        base_identity = None
+        for base in "ACGT":
+            if pmatrix[base][i] > max_prob:
+                max_prob = pmatrix[base][i]
+                base_identity = base
+        consensus_str += base_identity
+    return consensus_str
+```
+
+## Entropy
+
+The entropy of a column in a profile matrix is computed as:
+
+$$ H(p_1, \ldots, p_N) = -\sum^{N}_{i=1} p_i \cdot \log_2 p_i  $$
+
+where $p_i$ is the relative proportion
+
+```{python}
+def entropy(pmatrix: dict[str, float]) -> float:
+        score = 0
+        for row in pmatrix.values():
+            for n in row:
+                if n == 0: continue
+                score += -(n * log(n, 2))
+        return round(score, 4)
+```
+
+```{python}
+def d(pattern: str, dna: list[str]) -> int:
+    k = len(pattern)
+    dist = 0
+    for seq in dna:
+        hd_min = float("inf")
+        for i in range(len(seq)-k+1):
+            kmer = seq[i:i+k]
+            hd_curr = hamming_distance(kmer, pattern)
+            if hd_min > hd_curr:
+                hd_min = hd_curr
+        dist += hd_min
+    return dist
+    for row in pmatrix.values():
+        for n in row:
+            if n == 0: continue
+            score += -(n * log(n, 2))
+    return score
+```
+```{python}
+
+motifs = [
+    "TCGGGGGTTTTT",
+    "CCGGTGACTTAC",
+    "ACGGGGATTTTC",
+    "TTGGGGACTTTT",
+    "AAGGGGACTTCC",
+    "TTGGGGACTTCC",
+    "TCGGGGATTCAT",
+    "TCGGGGATTCCT",
+    "TAGGGGAACTAC",
+    "TCGGGTATAACC"
+]
+
+pmatrix = profile_matrix(motifs)
+c = consensus(pmatrix)
+entropy = entropy(pmatrix)
+print(c, entropy)
+```
+
+We can now formulate the Motif Finding Problem using a computational framework:
+
+> **Motif Finding Problem**: _Given a collection of strings, find a set of k-mers, one from each string, that minimizes the score of the resulting motif._
+>
+> - **Input**: A collection of string _dna_ and an integer _k_.
+> - **Output**: A collection _motifs_ of k-mers, one from each string in _dna_, minimizing _Score(motifs)_ among all possible choices of k-mers.
+
+As this is a bruteforce algorithm, it checks for all possible choice of k-mers across all strings in the list. The runtime of the algorithm is $O(n^t \cdot k \cdot t)$ which does not scale for larger matrices containing longer sequences. A faster algorithm is needed for this use case.
+
+Instead of scoring the motif matrix in a column-wise manner (summing the number of non-consensus bases), we could as easily compute a score row-by-row. The row-wise score corresponds to the hamming distance between the motif in the $i^{th}$ row and the consensus string.
+
+```{python}
+from genomics.sequtils import hamming_distance
+
+def d(consensus: str, motifs: list[str]) -> int:
+    """Computes the sum of hamming distances betwen each motif
+    and the consensus string."""
+    score = 0
+    for seq in motifs:
+        score += hamming_distance(consensus, seq)
+    return score
+```
+
+Instead of searching for a collection of k-mers _motifs_ minimizing _Score(motifs)_, we can instead search for a potential consensus string _pattern_ minimizing _d(pattern, motifs)_.
+
+> **Equivalent Motif Finding Problem**: _Given a collection of strings, find a collection of k-mers (one from each string) that minimizes the distance between all possible patterns and all possible collections of k-mers_.
+>
+> - **Input**: A collection of strings _dna_ and an integer _k_.
+> - **Output**: A k-mer _pattern_ and a collection of k-mers, one from each string in _dna_, minimizing _d(pattern, motifs)_ among all possible choices of _pattern_ and _motifs_.
+
+> **Median String Problem**: _Find a median string_.
+>
+> - **Input**: A collection of strings _dna_ and an integer _k_.
+> - **Output**: A k-mer _pattern_ that minimizes _d(pattern, dna)_ among all possible choices of k-mers.
+
+```{python}
+from genomics.sequtils import hamming_distance, all_strings
+
+
+def d(pattern: str, dna: list[str]) -> int:
+    k = len(pattern)
+    dist = 0
+    for seq in dna:
+        hd_min = float("inf")
+        for i in range(len(seq)-k+1):
+            kmer = seq[i:i+k]
+            hd_curr = hamming_distance(kmer, pattern)
+            if hd_min > hd_curr:
+                hd_min = hd_curr
+        dist += hd_min
+    return dist
+
+def median_string(dna: list[str], k: int):
+    dist_min = float("inf")
+    for kmer in all_strings(k):
+        curr_dist = d(kmer, dna)
+        if dist_min > curr_dist:
+            dist_min = curr_dist
+            median = kmer
+    return median
+```
+
+```{python}
+k = 3
+dna = ['AAATTGACGCAT', 'GACGACCACGTT', 'CGTCAGCGCCTG', 'GCTGAGCACCGG', 'AGTACGGGACAG']
+result = median_string(dna, k)
+print(result)
+```
+
+> **_Profile_-most Probable k-mer Problem**: _Find a Profile-most probable k-mer in a string_.
+>
+> - **Input**: A string _text_, an integer _k_, and a 4 x k matrix *profile*.
+> - **Output**: A _profile_-most probable k-mer in _text_.
+
+```{python}
+def compute_pr(kmer: str, profile: dict[str, list[float]]) -> float:
+    """
+    Compute the probability of `kmer` occuring as a subtring of a larger
+    sequence. Resulting value is based on `profile`.
+    """
+    assert len(kmer) == len(profile["A"])
+    pr = 1
+    for i, base in enumerate(kmer):
+        prop = profile[base][i]
+        if prop == 0:
+            return 0
+        pr *= prop
+    return pr
+
+def profile_most_probable_kmer(text: str, k: int, profile: dict[str, list[float]]) -> str:
+    """
+    Return a profile-most probable kmer based on its computed probability.
+    """
+    max_pr = 0
+    most_probable_kmer = text[:k]
+    for i in range(len(text)-k+1):
+        kmer = text[i:i+k]
+        kmer_pr = compute_pr(kmer, profile)
+        if kmer_pr > max_pr:
+            max_pr = kmer_pr
+            most_probable_kmer = kmer
+    return most_probable_kmer
+```
+
+```{python}
+text = "ACCTGTTTATTGCCTAAGTTCCGAACAAACCCAATATAGCCCGAGGGCCT"
+k = 5
+profile = {
+    "A": [0.2, 0.2, 0.3, 0.2, 0.3],
+    "C": [0.4, 0.3, 0.1, 0.5, 0.1],
+    "G": [0.3, 0.3, 0.5, 0.2, 0.4],
+    "T": [0.1, 0.2, 0.1, 0.1, 0.2],
+}
+
+result = profile_most_probable_kmer(text, k, profile)
+print(result)
+```
+
+```{python}
+def score(motifs: list[str]) -> int:
+    pm = profile_matrix(motifs)
+    c = consensus(pm)
+    return d(c, motifs)
+
+def greedy_motif_search(dna: list[str], k: int, t: int):
+    best_motifs = [s[:k] for s in dna]
+    first_seq = dna[0]
+    kmers = [first_seq[i:i+k] for i in range(len(first_seq)-k+1)]
+    for kmer in kmers:
+        curr_motifs = [kmer]
+        for i in range(1, t):
+            pm = profile_matrix(curr_motifs)
+            pmpk = profile_most_probable_kmer(dna[i], k, pm)
+            curr_motifs.append(pmpk)
+        if score(curr_motifs) < score(best_motifs):
+            best_motifs = curr_motifs
+    return best_motifs        
+```
+
+```{python}
+dna = [
+    "GGCGTTCAGGCA",
+    "AAGAATCAGTCA",
+    "CAAGGAGTTCGC",
+    "CACGTCAATCAC",
+    "CAATAATATTCG"
+]
+
+k, t = 3, 5
+result = greedy_motif_search(dna, k, t)
+print(result)
+```
+
+### An improved greedy motif search
+
+Apply Laplace's rule of succession by setting the base count of the count matrix to 1.
+
+```{python}
+def laplacian_profile_matrix(motifs: list[str]) -> dict[str,float]:
+    n = len(motifs)
+    M = {n: [] for n in 'ACGT'}
+    for row in transpose(motifs).values():
+        for base in 'ACGT':
+            adjusted_prop = (row.count(base) + 1) / (n + 4)
+            M[base].append(adjusted_prop)
+    return dict(M)
+
+def laplacian_greedy_motif_search(dna: list[str], k: int, t: int):
+    best_motifs = [s[:k] for s in dna]
+    first_seq = dna[0]
+    kmers = [first_seq[i:i+k] for i in range(len(first_seq)-k+1)]
+    for kmer in kmers:
+        curr_motifs = [kmer]
+        for i in range(1, t):
+            pm = laplacian_profile_matrix(curr_motifs)
+            pmpk = profile_most_probable_kmer(dna[i], k, pm)
+            curr_motifs.append(pmpk)
+        if score(curr_motifs) < score(best_motifs):
+            best_motifs = curr_motifs
+    return best_motifs     
+```
+
+```{python}
+result = laplacian_greedy_motif_search(dna, k, t)
+print(result)
+```
+
+## Randomized Algorithms
+
+```{python}
+def motifs(profile, dna):
+    k = len(profile['A'])
+    mp_kmers = []
+    for seq in dna:
+        pmpk = profile_most_probable_kmer(seq, k, profile)
+        mp_kmers.append(pmpk)
+    return mp_kmers
+
+def random_substrings(dna: list[str], k: int) -> list[str]:
+    motifs = []
+    choices = range(0, len(dna[0])-k)
+    for seq in dna:
+        start = np.random.choice(choices)
+        motifs.append(seq[start:start+k])
+    return motifs
+
+def randomized_motif_search(dna: list[str], k: int, t: int) -> list[str]:
+    m = random_substrings(dna, k)
+    best_motifs = m
+    while True:
+        pm = laplacian_profile_matrix(m)
+        m = motifs(pm, dna)
+        if score(m) < score(best_motifs):
+            best_motifs = m
+        else:
+            return best_motifs
+```
+
+```{python}
+dna = [
+    "CGCCCCTCTCGGGGGTGTTCAGTAAACGGCCA",
+    "GGGCGAGGTATGTGTAAGTGCCAAGGTGCCAG",
+    "TAGTACCGAGACCGAAAGAAGTATACAGGCGT",
+    "TAGATCAAGTTTCAGGTGCACGTCGGTGAACCAA",
+    "TCCACCAGCTCCACGTGCAATGTTGGCCTA"
+]
+k = 4
+
+pm = {
+    'A': [4/5, 0, 0, 1/5],
+    'C': [0, 3/5, 1/5, 0],
+    'G': [1/5, 1/5, 4/5, 0],
+    'T': [0, 1/5, 0, 4/5],  
+}
+print(randomized_motif_search(dna, 8, 5))
+```
